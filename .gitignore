@@ -1,0 +1,8 @@
+.env
+__pycache__/
+*.pyc
+state/*
+!state/portfolio_alert_state.json
+venv/
+.venv/
+.pycache/
