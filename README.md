@@ -1,6 +1,6 @@
 # Polymarket Portfolio Telegram Alert
 
-Скрипт принимает обычный публичный адрес кошелька, пытается определить через `GET https://gamma-api.polymarket.com/public-profile` соответствующий user profile address Polymarket, затем получает текущие позиции через `GET https://data-api.polymarket.com/positions` и отправляет сообщение в Telegram, если какая-либо купленная позиция выросла больше чем на 100% относительно средней цены покупки.
+Скрипт принимает обычный публичный адрес кошелька, пытается определить через `GET https://gamma-api.polymarket.com/public-profile` соответствующий user profile address Polymarket, затем получает текущие позиции через `GET https://data-api.polymarket.com/positions` и отправляет сообщение в Telegram, если какая-либо купленная позиция выросла больше чем на 50% относительно средней цены покупки.
 
 Поведение:
 - берёт открытые позиции пользователя;
@@ -53,7 +53,7 @@ python3 main.py --loop
 
 Через `.env`:
 
-- `ALERT_THRESHOLD_PERCENT=100`
+- `ALERT_THRESHOLD_PERCENT=50`
 - `POLL_INTERVAL_SECONDS=300`
 - `REQUEST_TIMEOUT_SECONDS=20`
 - `POSITIONS_PAGE_LIMIT=200`

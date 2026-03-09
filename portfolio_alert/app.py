@@ -13,7 +13,7 @@ from .telegram import TelegramNotifier
 
 def main(argv: Sequence[str] = ()) -> int:
     parser = argparse.ArgumentParser(
-        description="Monitor Polymarket portfolio positions and alert in Telegram after >100% growth."
+        description="Monitor Polymarket portfolio positions and alert in Telegram after >50% growth."
     )
     parser.add_argument(
         "--loop",
