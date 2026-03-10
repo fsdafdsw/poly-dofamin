@@ -61,7 +61,7 @@ def load_settings(require_telegram: bool = True) -> Settings:
             "POLYMARKET_WALLET_ADDRESS must be a 0x-prefixed 40-hex wallet address."
         )
 
-    threshold_percent = _env_float("ALERT_THRESHOLD_PERCENT", 50.0)
+    threshold_percent = _env_float("ALERT_THRESHOLD_PERCENT", 30.0)
     poll_interval_seconds = _env_int("POLL_INTERVAL_SECONDS", 300)
     request_timeout_seconds = _env_int("REQUEST_TIMEOUT_SECONDS", 20)
     positions_page_limit = _env_int("POSITIONS_PAGE_LIMIT", 200)
