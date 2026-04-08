@@ -1,5 +1,6 @@
+import json
 from dataclasses import dataclass
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, Iterable, List, Optional
 
 from .config import Settings
 from .http import get_json
@@ -34,6 +35,29 @@ class Position:
         if not slug:
             return ""
         return "https://polymarket.com/event/{0}".format(slug)
+
+
+@dataclass(frozen=True)
+class Market:
+    slug: str
+    condition_id: str
+    question: str
+    outcomes: List[str]
+    outcome_prices: List[float]
+    closed: bool
+    accepting_orders: bool
+    automatically_resolved: bool
+    uma_resolution_status: str
+
+    def outcome_price_for(self, outcome_label: str) -> Optional[float]:
+        normalized = outcome_label.strip().lower()
+        for index, outcome in enumerate(self.outcomes):
+            if outcome.strip().lower() != normalized:
+                continue
+            if index >= len(self.outcome_prices):
+                return None
+            return self.outcome_prices[index]
+        return None
 
 
 @dataclass(frozen=True)
@@ -75,24 +99,31 @@ class PolymarketClient:
             display_name=_extract_display_name(payload),
         )
 
-    def fetch_positions(self) -> List[Position]:
+    def fetch_positions(
+        self,
+        redeemable: Optional[bool] = False,
+        mergeable: Optional[bool] = False,
+    ) -> List[Position]:
         positions = []
         offset = 0
         profile = self.resolve_profile()
 
         while True:
+            params = {
+                "user": profile.user_profile_address,
+                "sizeThreshold": 0,
+                "limit": self.settings.positions_page_limit,
+                "offset": offset,
+                "sortBy": "PERCENTPNL",
+                "sortDirection": "DESC",
+            }
+            if redeemable is not None:
+                params["redeemable"] = str(redeemable).lower()
+            if mergeable is not None:
+                params["mergeable"] = str(mergeable).lower()
             payload = get_json(
                 "{0}/positions".format(self.settings.data_api_base_url),
-                params={
-                    "user": profile.user_profile_address,
-                    "sizeThreshold": 0,
-                    "redeemable": "false",
-                    "mergeable": "false",
-                    "limit": self.settings.positions_page_limit,
-                    "offset": offset,
-                    "sortBy": "PERCENTPNL",
-                    "sortDirection": "DESC",
-                },
+                params=params,
                 timeout=self.settings.request_timeout_seconds,
                 headers=self.headers,
             )
@@ -112,6 +143,31 @@ class PolymarketClient:
             offset += len(payload)
 
         return positions
+
+    def fetch_markets_by_slug(self, slugs: Iterable[str]) -> Dict[str, Market]:
+        markets = {}
+        for slug in slugs:
+            normalized_slug = str(slug or "").strip()
+            if not normalized_slug or normalized_slug in markets:
+                continue
+            try:
+                market = self.fetch_market_by_slug(normalized_slug)
+            except Exception:
+                continue
+            if market is None:
+                continue
+            markets[normalized_slug] = market
+        return markets
+
+    def fetch_market_by_slug(self, slug: str) -> Optional[Market]:
+        payload = get_json(
+            "{0}/markets/slug/{1}".format(self.settings.gamma_api_base_url, slug),
+            timeout=self.settings.request_timeout_seconds,
+            headers=self.headers,
+        )
+        if not isinstance(payload, dict):
+            return None
+        return self._normalize_market(payload)
 
     def _normalize_position(self, payload: Dict[str, Any]) -> Optional[Position]:
         size = _to_float(payload.get("size"))
@@ -151,12 +207,38 @@ class PolymarketClient:
             negative_risk=bool(payload.get("negativeRisk", False)),
         )
 
+    def _normalize_market(self, payload: Dict[str, Any]) -> Market:
+        return Market(
+            slug=str(payload.get("slug") or "").strip(),
+            condition_id=str(payload.get("conditionId") or "").strip(),
+            question=str(payload.get("question") or "").strip(),
+            outcomes=_parse_jsonish_array(payload.get("outcomes")),
+            outcome_prices=[_to_float(item) for item in _parse_jsonish_array(payload.get("outcomePrices"))],
+            closed=bool(payload.get("closed", False)),
+            accepting_orders=bool(payload.get("acceptingOrders", False)),
+            automatically_resolved=bool(payload.get("automaticallyResolved", False)),
+            uma_resolution_status=str(payload.get("umaResolutionStatus") or "").strip(),
+        )
+
 
 def _to_float(value: Any) -> float:
     try:
         return float(value)
     except (TypeError, ValueError):
         return 0.0
+
+
+def _parse_jsonish_array(value: Any) -> List[Any]:
+    if isinstance(value, list):
+        return value
+    if isinstance(value, str):
+        try:
+            loaded = json.loads(value)
+        except json.JSONDecodeError:
+            return []
+        if isinstance(loaded, list):
+            return loaded
+    return []
 
 
 def _extract_user_profile_address(payload: Dict[str, Any], fallback: str) -> str:

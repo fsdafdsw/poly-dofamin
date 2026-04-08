@@ -2,11 +2,11 @@ import argparse
 import time
 from dataclasses import replace
 from datetime import datetime, timezone
-from typing import Iterable, List, Sequence, Set, Tuple
+from typing import Dict, Iterable, List, Sequence, Set, Tuple
 
 from .config import Settings, load_settings
-from .logic import AlertSignal, partition_alerts
-from .polymarket import PolymarketClient
+from .logic import AlertSignal, ResultSignal, partition_alerts, partition_result_alerts
+from .polymarket import PolymarketClient, Position
 from .state import load_state, save_state
 from .telegram import TelegramNotifier
 
@@ -67,39 +67,80 @@ def run_once(settings: Settings, dry_run: bool) -> int:
     client = PolymarketClient(settings)
     notifier = None if dry_run else TelegramNotifier(settings)
 
-    positions = client.fetch_positions()
+    positions = client.fetch_positions(redeemable=False, mergeable=False)
+    redeemable_positions = client.fetch_positions(redeemable=True, mergeable=None)
+    all_positions = merge_positions(positions, redeemable_positions)
+    markets_by_slug = client.fetch_markets_by_slug(position.slug for position in all_positions if position.slug)
+
     new_alerts, active_keys = partition_alerts(
         positions=positions,
-        alerted_keys=state.alerted_keys,
+        alerted_keys=state.growth_alerted_keys,
         threshold_percent=settings.threshold_percent,
     )
+    result_alerts, result_alerted_keys = partition_result_alerts(
+        positions=all_positions,
+        markets_by_slug=markets_by_slug,
+        alerted_result_keys=state.result_alerted_keys,
+    )
 
-    persisted_keys = set(state.alerted_keys).intersection(active_keys)
-    sent_count = 0
+    persisted_growth_keys = set(state.growth_alerted_keys).intersection(active_keys)
+    persisted_result_keys = set(state.result_alerted_keys)
+    sent_growth_count = 0
+    sent_result_count = 0
 
     if new_alerts:
         for message, keys in build_message_chunks(new_alerts, settings.threshold_percent):
             if dry_run:
                 print(message)
                 print("")
-                sent_count += len(keys)
+                sent_growth_count += len(keys)
                 continue
 
             try:
                 notifier.send(message)
             except Exception:
-                save_state(settings.state_path, persisted_keys)
+                save_state(
+                    settings.state_path,
+                    growth_alerted_keys=persisted_growth_keys,
+                    result_alerted_keys=persisted_result_keys,
+                )
                 raise
-            persisted_keys.update(keys)
-            sent_count += len(keys)
+            persisted_growth_keys.update(keys)
+            sent_growth_count += len(keys)
+
+    if result_alerts:
+        for message, keys in build_result_message_chunks(result_alerts):
+            if dry_run:
+                print(message)
+                print("")
+                sent_result_count += len(keys)
+                continue
+
+            try:
+                notifier.send(message)
+            except Exception:
+                save_state(
+                    settings.state_path,
+                    growth_alerted_keys=persisted_growth_keys,
+                    result_alerted_keys=persisted_result_keys,
+                )
+                raise
+            persisted_result_keys.update(keys)
+            sent_result_count += len(keys)
 
     if not dry_run:
-        save_state(settings.state_path, persisted_keys)
+        save_state(
+            settings.state_path,
+            growth_alerted_keys=persisted_growth_keys,
+            result_alerted_keys=persisted_result_keys if result_alerts else result_alerted_keys,
+        )
     print(
-        "Checked {0} positions at {1}. New alerts: {2}. Active high-growth positions: {3}.".format(
+        "Checked {0} active positions and {1} redeemable positions at {2}. Growth alerts: {3}. Result alerts: {4}. Active high-growth positions: {5}.".format(
             len(positions),
+            len(redeemable_positions),
             datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC"),
-            sent_count,
+            sent_growth_count,
+            sent_result_count,
             len(active_keys),
         )
     )
@@ -137,6 +178,35 @@ def build_message_chunks(
     return chunks
 
 
+def build_result_message_chunks(
+    alerts: Iterable[ResultSignal],
+    max_length: int = 3800,
+) -> List[Tuple[str, Set[str]]]:
+    header = "Polymarket result alert\n{0}".format(
+        datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC"),
+    )
+
+    chunks = []
+    current_text = header
+    current_keys = set()
+
+    for index, alert in enumerate(alerts, start=1):
+        block = format_result_alert_block(index=index, alert=alert)
+        candidate = "{0}\n\n{1}".format(current_text, block)
+        if current_keys and len(candidate) > max_length:
+            chunks.append((current_text, current_keys))
+            current_text = header + "\n\n" + block
+            current_keys = {_result_key(alert)}
+            continue
+
+        current_text = candidate
+        current_keys.add(_result_key(alert))
+
+    if current_keys:
+        chunks.append((current_text, current_keys))
+    return chunks
+
+
 def format_alert_block(index: int, alert: AlertSignal) -> str:
     position = alert.position
     lines = [
@@ -156,6 +226,41 @@ def format_alert_block(index: int, alert: AlertSignal) -> str:
     if position.url:
         lines.append(position.url)
     return "\n".join(lines)
+
+
+def format_result_alert_block(index: int, alert: ResultSignal) -> str:
+    position = alert.position
+    result_label = "WIN" if alert.result == "WON" else "LOSS"
+    lines = [
+        "{0}. {1}".format(index, position.title),
+        "Outcome: {0}".format(position.outcome),
+        "Result: {0}".format(result_label),
+        "Entry {0} -> Settlement {1}".format(
+            fmt_price(position.avg_price),
+            fmt_price(alert.settlement_price if alert.settlement_price is not None else position.current_price),
+        ),
+        "Size {0} | Cost {1} | Value {2}".format(
+            fmt_number(position.size),
+            fmt_money(position.initial_value),
+            fmt_money(position.current_value),
+        ),
+    ]
+    if position.url:
+        lines.append(position.url)
+    return "\n".join(lines)
+
+
+def merge_positions(primary: Sequence[Position], secondary: Sequence[Position]) -> List[Position]:
+    merged: Dict[str, Position] = {}
+    for position in primary:
+        merged[position.key] = position
+    for position in secondary:
+        merged[position.key] = position
+    return list(merged.values())
+
+
+def _result_key(alert: ResultSignal) -> str:
+    return "{0}:{1}".format(alert.position.key, alert.result)
 
 
 def fmt_percent(value: float) -> str:

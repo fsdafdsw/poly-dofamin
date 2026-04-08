@@ -7,7 +7,8 @@ from typing import Set
 
 @dataclass(frozen=True)
 class AlertState:
-    alerted_keys: Set[str]
+    growth_alerted_keys: Set[str]
+    result_alerted_keys: Set[str]
     last_checked_at: str
 
 
@@ -20,23 +21,35 @@ def load_state(path: str) -> AlertState:
     except (ValueError, TypeError):
         return AlertState(alerted_keys=set(), last_checked_at="")
 
-    alerted_keys = payload.get("alerted_keys")
-    if not isinstance(alerted_keys, list):
-        alerted_keys = []
+    growth_alerted_keys = payload.get("growth_alerted_keys")
+    if not isinstance(growth_alerted_keys, list):
+        growth_alerted_keys = payload.get("alerted_keys")
+    if not isinstance(growth_alerted_keys, list):
+        growth_alerted_keys = []
+
+    result_alerted_keys = payload.get("result_alerted_keys")
+    if not isinstance(result_alerted_keys, list):
+        result_alerted_keys = []
 
     return AlertState(
-        alerted_keys={str(item) for item in alerted_keys if item},
+        growth_alerted_keys={str(item) for item in growth_alerted_keys if item},
+        result_alerted_keys={str(item) for item in result_alerted_keys if item},
         last_checked_at=str(payload.get("last_checked_at") or ""),
     )
 
 
-def save_state(path: str, alerted_keys: Set[str]) -> None:
+def save_state(
+    path: str,
+    growth_alerted_keys: Set[str],
+    result_alerted_keys: Set[str],
+) -> None:
     directory = os.path.dirname(path)
     if directory:
         os.makedirs(directory, exist_ok=True)
 
     payload = {
-        "alerted_keys": sorted(alerted_keys),
+        "growth_alerted_keys": sorted(growth_alerted_keys),
+        "result_alerted_keys": sorted(result_alerted_keys),
         "last_checked_at": datetime.now(timezone.utc).isoformat(),
     }
 
