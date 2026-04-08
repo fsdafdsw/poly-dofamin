@@ -87,6 +87,12 @@ def run_once(settings: Settings, dry_run: bool) -> int:
     persisted_result_keys = set(state.result_alerted_keys)
     sent_growth_count = 0
     sent_result_count = 0
+    result_tracking_initialized = state.result_tracking_initialized
+
+    if not result_tracking_initialized:
+        persisted_result_keys = set(result_alerted_keys)
+        result_alerts = []
+        result_tracking_initialized = True
 
     if new_alerts:
         for message, keys in build_message_chunks(new_alerts, settings.threshold_percent):
@@ -103,6 +109,7 @@ def run_once(settings: Settings, dry_run: bool) -> int:
                     settings.state_path,
                     growth_alerted_keys=persisted_growth_keys,
                     result_alerted_keys=persisted_result_keys,
+                    result_tracking_initialized=result_tracking_initialized,
                 )
                 raise
             persisted_growth_keys.update(keys)
@@ -123,6 +130,7 @@ def run_once(settings: Settings, dry_run: bool) -> int:
                     settings.state_path,
                     growth_alerted_keys=persisted_growth_keys,
                     result_alerted_keys=persisted_result_keys,
+                    result_tracking_initialized=result_tracking_initialized,
                 )
                 raise
             persisted_result_keys.update(keys)
@@ -133,6 +141,7 @@ def run_once(settings: Settings, dry_run: bool) -> int:
             settings.state_path,
             growth_alerted_keys=persisted_growth_keys,
             result_alerted_keys=persisted_result_keys if result_alerts else result_alerted_keys,
+            result_tracking_initialized=result_tracking_initialized,
         )
     print(
         "Checked {0} active positions and {1} redeemable positions at {2}. Growth alerts: {3}. Result alerts: {4}. Active high-growth positions: {5}.".format(
@@ -231,6 +240,7 @@ def format_alert_block(index: int, alert: AlertSignal) -> str:
 def format_result_alert_block(index: int, alert: ResultSignal) -> str:
     position = alert.position
     result_label = "WIN" if alert.result == "WON" else "LOSS"
+    payout = position.size * (alert.settlement_price if alert.settlement_price is not None else position.current_price)
     lines = [
         "{0}. {1}".format(index, position.title),
         "Outcome: {0}".format(position.outcome),
@@ -239,10 +249,10 @@ def format_result_alert_block(index: int, alert: ResultSignal) -> str:
             fmt_price(position.avg_price),
             fmt_price(alert.settlement_price if alert.settlement_price is not None else position.current_price),
         ),
-        "Size {0} | Cost {1} | Value {2}".format(
+        "Size {0} | Cost {1} | Payout {2}".format(
             fmt_number(position.size),
             fmt_money(position.initial_value),
-            fmt_money(position.current_value),
+            fmt_money(payout),
         ),
     ]
     if position.url:

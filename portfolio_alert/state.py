@@ -9,6 +9,7 @@ from typing import Set
 class AlertState:
     growth_alerted_keys: Set[str]
     result_alerted_keys: Set[str]
+    result_tracking_initialized: bool
     last_checked_at: str
 
 
@@ -17,9 +18,19 @@ def load_state(path: str) -> AlertState:
         with open(path, "r", encoding="utf-8") as handle:
             payload = json.load(handle)
     except FileNotFoundError:
-        return AlertState(alerted_keys=set(), last_checked_at="")
+        return AlertState(
+            growth_alerted_keys=set(),
+            result_alerted_keys=set(),
+            result_tracking_initialized=False,
+            last_checked_at="",
+        )
     except (ValueError, TypeError):
-        return AlertState(alerted_keys=set(), last_checked_at="")
+        return AlertState(
+            growth_alerted_keys=set(),
+            result_alerted_keys=set(),
+            result_tracking_initialized=False,
+            last_checked_at="",
+        )
 
     growth_alerted_keys = payload.get("growth_alerted_keys")
     if not isinstance(growth_alerted_keys, list):
@@ -34,6 +45,9 @@ def load_state(path: str) -> AlertState:
     return AlertState(
         growth_alerted_keys={str(item) for item in growth_alerted_keys if item},
         result_alerted_keys={str(item) for item in result_alerted_keys if item},
+        result_tracking_initialized=bool(
+            payload.get("result_tracking_initialized", bool(result_alerted_keys))
+        ),
         last_checked_at=str(payload.get("last_checked_at") or ""),
     )
 
@@ -42,6 +56,7 @@ def save_state(
     path: str,
     growth_alerted_keys: Set[str],
     result_alerted_keys: Set[str],
+    result_tracking_initialized: bool,
 ) -> None:
     directory = os.path.dirname(path)
     if directory:
@@ -50,6 +65,7 @@ def save_state(
     payload = {
         "growth_alerted_keys": sorted(growth_alerted_keys),
         "result_alerted_keys": sorted(result_alerted_keys),
+        "result_tracking_initialized": result_tracking_initialized,
         "last_checked_at": datetime.now(timezone.utc).isoformat(),
     }
 
