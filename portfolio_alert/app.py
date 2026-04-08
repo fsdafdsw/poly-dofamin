@@ -191,7 +191,7 @@ def build_result_message_chunks(
     alerts: Iterable[ResultSignal],
     max_length: int = 3800,
 ) -> List[Tuple[str, Set[str]]]:
-    header = "Polymarket result alert\n{0}".format(
+    header = "Polymarket: результаты ставок\n{0}".format(
         datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC"),
     )
 
@@ -239,21 +239,24 @@ def format_alert_block(index: int, alert: AlertSignal) -> str:
 
 def format_result_alert_block(index: int, alert: ResultSignal) -> str:
     position = alert.position
-    result_label = "WIN" if alert.result == "WON" else "LOSS"
-    payout = position.size * (alert.settlement_price if alert.settlement_price is not None else position.current_price)
+    result_label = "Ставка выиграла" if alert.result == "WON" else "Ставка проиграла"
+    settlement_price = alert.settlement_price if alert.settlement_price is not None else position.current_price
+    payout = position.size * settlement_price
+    pnl = payout - position.initial_value
     lines = [
-        "{0}. {1}".format(index, position.title),
-        "Outcome: {0}".format(position.outcome),
-        "Result: {0}".format(result_label),
-        "Entry {0} -> Settlement {1}".format(
+        "{0}. {1}".format(index, result_label),
+        position.title,
+        "Исход: {0}".format(position.outcome),
+        "Вход {0} -> Расчёт {1}".format(
             fmt_price(position.avg_price),
-            fmt_price(alert.settlement_price if alert.settlement_price is not None else position.current_price),
+            fmt_price(settlement_price),
         ),
-        "Size {0} | Cost {1} | Payout {2}".format(
+        "Объём {0} | Ставка {1} | Выплата {2}".format(
             fmt_number(position.size),
             fmt_money(position.initial_value),
             fmt_money(payout),
         ),
+        "Итог: {0}".format(fmt_money_with_sign(pnl)),
     ]
     if position.url:
         lines.append(position.url)
@@ -280,6 +283,11 @@ def fmt_percent(value: float) -> str:
 
 def fmt_money(value: float) -> str:
     return "${0:,.2f}".format(value)
+
+
+def fmt_money_with_sign(value: float) -> str:
+    sign = "+" if value >= 0 else "-"
+    return "{0}${1:,.2f}".format(sign, abs(value))
 
 
 def fmt_price(value: float) -> str:
